@@ -26,6 +26,8 @@ class TCPVideoSender:
         fps:      Target frame rate.
         bitrate:  H.264 bitrate in bps (default 4 Mbps).
         hevc:     Use H.265 instead of H.264 (default False).
+        connect_timeout: TCP connect timeout in seconds. Prevents an
+            unreachable video listener from blocking the caller forever.
     """
 
     def __init__(
@@ -37,6 +39,7 @@ class TCPVideoSender:
         fps: int,
         bitrate: int = 4_000_000,
         hevc: bool = False,
+        connect_timeout: float = 5.0,
     ) -> None:
         self._ip = ip
         self._port = port
@@ -44,6 +47,7 @@ class TCPVideoSender:
         self._height = height
         self._fps = fps
         self._bitrate = bitrate
+        self._connect_timeout = connect_timeout
         self._codec_name = "libx265" if hevc else "libx264"
 
         self._sock: socket.socket | None = None
@@ -102,7 +106,9 @@ class TCPVideoSender:
     def _connect(self) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self._sock.settimeout(self._connect_timeout)
         self._sock.connect((self._ip, self._port))
+        self._sock.settimeout(None)
         print(f"[TCPVideoSender] Connected to {self._ip}:{self._port}")
 
     def _init_encoder(self) -> None:

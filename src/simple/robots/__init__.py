@@ -13,6 +13,7 @@ from .g1 import G1
 from .g1_inspire import G1Inspire
 from .g1_wholebody import G1Wholebody
 from .g1_inspire_wholebody import G1InspireWholebody
+from .jaka import Jaka
 
 try:
     from .g1_sonic import G1Sonic

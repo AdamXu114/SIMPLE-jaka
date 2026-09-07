@@ -31,6 +31,7 @@ class TCPControlServer:
     Callbacks (assign before calling start()):
         on_open_camera(camera_request: dict) -> None
         on_close_camera()                    -> None
+        on_client_disconnect()               -> None   (after each client ends)
     """
 
     def __init__(self, address: str) -> None:
@@ -40,6 +41,10 @@ class TCPControlServer:
 
         self.on_open_camera: Callable[[dict], None] | None = None
         self.on_close_camera: Callable[[], None] | None = None
+        # Fired once after a client connection ends (disconnect / RST / server
+        # stop). Lets callers tear down an active stream so the next client's
+        # OPEN_CAMERA is not swallowed by a stale streaming thread.
+        self.on_client_disconnect: Callable[[], None] | None = None
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -104,6 +109,8 @@ class TCPControlServer:
 
             print(f"[TCPServer] Client connected from {addr}")
             self._handle_client(conn)
+            if self.on_client_disconnect:
+                self.on_client_disconnect()
             print("[TCPServer] Client disconnected, waiting for next connection")
 
         server_sock.close()

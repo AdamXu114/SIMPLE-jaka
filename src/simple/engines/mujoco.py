@@ -6,7 +6,7 @@ Licensed under the terms in LICENSE file.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Dict, Tuple, Any, List
+from typing import TYPE_CHECKING, Dict, Tuple, Any, List, Iterable, Optional
 
 if TYPE_CHECKING:
     # from simple.core.asset import Asset
@@ -42,6 +42,12 @@ class MujocoSimulator(Simulator):
         self.task = task
         self.render_hz = task.metadata["render_hz"] if "render_hz" in self.task.metadata else render_hz
         self.physics_dt = task.metadata["physics_dt"] if "physics_dt" in self.task.metadata else physics_dt
+        # Optional viewer config threaded through to launch_passive (set by a
+        # CLI before reset to customise the MuJoCo window).
+        self.viewer_key_callback = None
+        self.viewer_show_left_ui: bool | None = None   # None = mujoco default (True)
+        self.viewer_show_right_ui: bool | None = None
+        self.viewer_track_body: str | None = None       # e.g. "base_link" (tracking cam)
 
         # TODO move to reset? 
         # self.mj_physics = None
@@ -280,8 +286,30 @@ class MujocoSimulator(Simulator):
             if not self.headless:
                 # This will display the int running physics
                 from mujoco import viewer
-                self.viewer = viewer.launch_passive(self.mjModel, self.mjData)
-            
+                self.viewer = viewer.launch_passive(
+                    self.mjModel,
+                    self.mjData,
+                    key_callback=self.viewer_key_callback,
+                    show_left_ui=(
+                        bool(self.viewer_show_left_ui)
+                        if self.viewer_show_left_ui is not None
+                        else True
+                    ),
+                    show_right_ui=(
+                        bool(self.viewer_show_right_ui)
+                        if self.viewer_show_right_ui is not None
+                        else True
+                    ),
+                )
+                # Tracking camera on a body (sim2real-style) if requested.
+                if self.viewer_track_body:
+                    bid = mujoco.mj_name2id(
+                        self.mjModel, mujoco.mjtObj.mjOBJ_BODY, self.viewer_track_body
+                    )
+                    if bid >= 0:
+                        self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+                        self.viewer.cam.trackbodyid = int(bid)
+
         # ?. reset render step
         self.render_step = 0
 
@@ -541,6 +569,24 @@ class MujocoSimulator(Simulator):
         else:
             self._apply_mujoco_camera_intrinsics(mj_camera, camera)
 
+    @staticmethod
+    def _camera_local_quat(camera, q_isaac_mujoco) -> np.ndarray:
+        """Return the camera's local quaternion relative to its mount body.
+
+        If the camera cfg declares an explicit (non-identity) quaternion, use it
+        as-is (the caller already gave a MuJoCo-frame forward pose). Otherwise
+        fall back to the G1 convention ``q_isaac_mujoco`` (identity pose → looks
+        along robot-forward).
+        """
+        q = np.asarray(camera.pose.quaternion or [1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        is_identity = (
+            np.allclose(q[1:], 0.0, atol=1e-6)
+            and np.isclose(abs(float(q[0])), 1.0, atol=1e-6)
+        )
+        if is_identity:
+            return q_isaac_mujoco
+        return q
+
     def _build_camera(self, cname:str, camera: CameraEntity):
         q_isaac_mujoco = t3d.quaternions.mat2quat(np.array([
             [ 0,  0, -1],
@@ -560,38 +606,50 @@ class MujocoSimulator(Simulator):
                 quat=cam_q,
             )
         elif camera.mount == "eye_in_hand":
+            # Mount on the robot wrist link (matches IsaacSim) with the camera
+            # pose, instead of a fixed world position.
+            wrist_cam_link = getattr(self.task.robot, "wrist_cam_link", None)
+            mount_body = None
+            for body in self.mj_worldbody.find_all("body"):
+                if body.name == wrist_cam_link:
+                    mount_body = body
+                    break
+            if mount_body is None:
+                mount_body = self.mj_worldbody
+            cam_quat = self._camera_local_quat(camera, q_isaac_mujoco)
             self._add_mujoco_camera(
-                self.mj_worldbody,
+                mount_body,
                 camera,
                 name=cname,
-                pos=[1.5, 0., 0.8],  #  FIXME
-                xyaxes=[0,1,0,-0.5,0,1], 
+                pos=camera.pose.position or [0.0, 0.0, 0.0],
+                quat=cam_quat,
             )
         elif camera.mount == "eye_in_head":
-            torso_body = None
-            for body in self.mj_worldbody.find_all('body'):
-                if body.name == "torso_link":
-                    torso_body = body
+            # Resolve head camera body from robot's head_cam_link, with
+            # fallback to "torso_link" for G1 backwards compatibility.
+            head_cam_link = getattr(self.task.robot, "head_cam_link", "torso_link")
+            head_body = None
+            for body in self.mj_worldbody.find_all("body"):
+                if body.name == head_cam_link:
+                    head_body = body
                     break
-            assert torso_body is not None
-            """ 
-            I know this numbers look crazy!
-            I obtain the first coordinate using isaacsim (g1_29dof_wholebody_dex3.usd)
-            and obtain the second coordinates using mujoco (g1_29dof_wholebody_dex3.xml)
-            and then i add them up by LUCK and it works! 
-            """
-            DEFAULT_HEAD_CAM_POSITION = np.array([0.05366004+0.0039635, 0.01752999 + 0, 0.4738702 + -0.044], dtype=np.float32)
-            DEFAULT_HEAD_CAM_ORIENTATION = np.array([0.91496, 0.0, 0.40355, 0.0], dtype=np.float32)
-            q = np.asarray(camera.pose.quaternion, dtype=np.float32)
-            is_identity_quat = np.allclose(q[1:], 0.0, atol=1e-6) and np.isclose(abs(float(q[0])), 1.0, atol=1e-6)
-            assert is_identity_quat, f"Expected eye_in_head camera quaternion to be identity (wxyz)"
+            if head_body is None:
+                # Fallback: try torso_link (G1 convention)
+                for body in self.mj_worldbody.find_all("body"):
+                    if body.name == "torso_link":
+                        head_body = body
+                        break
+            assert head_body is not None, (
+                f"eye_in_head camera: no body named '{head_cam_link}' "
+                f"or 'torso_link' found in the scene"
+            )
 
             self._add_mujoco_camera(
-                torso_body,
+                head_body,
                 camera,
                 name=cname,
-                pos=DEFAULT_HEAD_CAM_POSITION + camera.pose.position,  # FIXME
-                quat=t3d.quaternions.qmult(DEFAULT_HEAD_CAM_ORIENTATION, q_isaac_mujoco),
+                pos=camera.pose.position,
+                quat=self._camera_local_quat(camera, q_isaac_mujoco),
             )
         else:
             raise ValueError(f"Unsupported camera mount: {camera.mount}")
@@ -681,7 +739,11 @@ class MujocoSimulator(Simulator):
         background_i16 = background.astype(np.int16)
         return np.any(np.abs(color_i16 - background_i16) > 2, axis=-1)
 
-    def render(self, render_robot_mask: bool | str = False) -> Dict[str, np.ndarray]:
+    def render(
+        self,
+        render_robot_mask: bool | str = False,
+        camera_names: Optional[Iterable[str]] = None,
+    ) -> Dict[str, np.ndarray]:
         image_observations = {}
         mask_camera_name = None
         if isinstance(render_robot_mask, str):
@@ -691,6 +753,8 @@ class MujocoSimulator(Simulator):
 
         robot_geom_ids = self._robot_mask_geom_ids() if mask_camera_name is not None else set()
         for mjCamera in self.mj_worldbody.find_all('camera'):
+            if camera_names is not None and mjCamera.name not in camera_names:
+                continue
             renderer = self.renderers[mjCamera.name]
             if renderer is None:
                 continue

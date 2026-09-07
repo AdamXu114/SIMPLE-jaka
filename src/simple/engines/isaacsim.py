@@ -6,7 +6,10 @@ Licensed under the terms in LICENSE file.
 """
 
 import copy
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 from typing import Dict, Tuple
 
 import carb
@@ -791,6 +794,15 @@ class IsaacSimSimulator(Simulator):
         obj_name = obj_info.asset.name
         uid = obj_info.asset.uid
 
+        # Idempotent across episode resets: if the articulation already exists,
+        # just reposition it instead of re-adding the USD reference (which would
+        # re-compose the prim and invalidate the physics tensor view).
+        if obj_name in self.articulated_objects:
+            self.articulated_objects[obj_name].set_world_pose(
+                obj_info.pose.position, obj_info.pose.quaternion
+            )
+            return
+
         isaacsim_stage.add_reference_to_stage(
             usd_path=self.resolve_data_path(obj_info.asset.usd_path),
             prim_path=f"{self.workspace_prim_path}/articulated_objects",
@@ -846,22 +858,36 @@ class IsaacSimSimulator(Simulator):
             prim_path=f"{self.workspace_prim_path}/Robot",
         )
 
+        # Resolve the robot root prim. Some USDs (Isaac Lab style, e.g. Jaka)
+        # mount the articulation directly at .../Robot, while others (G1)
+        # nest it under .../Robot/{robot_ns}.
+        from omni.isaac.core.utils.stage import get_current_stage
+        _stage = get_current_stage()
+        nested_path = f"{self.workspace_prim_path}/Robot/{robot_ns}"
+        if robot_ns and _stage.GetPrimAtPath(nested_path).IsValid():
+            robot_root_path = nested_path
+        else:
+            robot_root_path = f"{self.workspace_prim_path}/Robot"
+            logger.warning("Robot root prim not found at %s, using %s",
+                           nested_path, robot_root_path)
+        self.robot_root_path = robot_root_path
+
         robo_actor = self.task.layout.actors["robot"]
         self.robot = IsaacRobot(
-            prim_path=f"{self.workspace_prim_path}/Robot/{robot_ns}",
+            prim_path=robot_root_path,
             position=robo_actor.pose.position, # does not work
-            orientation=robo_actor.pose.quaternion, # does not work 
+            orientation=robo_actor.pose.quaternion, # does not work
         )
         # TODO assert self.task.robot.FRANKA_FINGER_LENGTH == self.layout.robot_info["robot_eef_offset"], "bug"
 
         robot_eef_xform = XFormPrim(
-            f'{self.workspace_prim_path}/Robot/{robot_ns}/{eef_prim_path}',
+            f'{robot_root_path}/{eef_prim_path}',
             translation=[0, 0, self.task.robot.robot_eef_offset],
             orientation=[1., 0., 0., 0.],
             # visible=False,
         )
         robot_hand = XFormPrim(
-            f'{self.workspace_prim_path}/Robot/{robot_ns}/{hand_prim_path}',
+            f'{robot_root_path}/{hand_prim_path}',
             translation=[0, 0, 0],
             orientation=[1., 0., 0., 0.],
             # visible=False,
@@ -870,6 +896,8 @@ class IsaacSimSimulator(Simulator):
         self.robot_hand = robot_hand
 
     def add_cameras(self):
+        robot_root_path = getattr(self, "robot_root_path", None) or \
+            f"{self.workspace_prim_path}/Robot/{self.task.robot.robot_ns}"
         for cam_key, cam_info in self.task.layout.cameras.items():
             if cam_info.mount == "eye_in_hand":
                 # FIXME
@@ -877,12 +905,12 @@ class IsaacSimSimulator(Simulator):
                     wrist_cam_link = self.task.robot.wrist_cam_link.replace("right", "left")
                 else:
                     wrist_cam_link = self.task.robot.wrist_cam_link
-                cam_prim_path = f"{self.workspace_prim_path}/Robot/{self.task.robot.robot_ns}/{wrist_cam_link}"
+                cam_prim_path = f"{robot_root_path}/{wrist_cam_link}"
             elif cam_info.mount == "eye_on_base":
-                cam_prim_path = f"{self.workspace_prim_path}/Robot/{self.task.robot.robot_ns}"
+                cam_prim_path = f"{robot_root_path}"
             elif cam_info.mount == "eye_in_head":
                 head_prim_link = self.task.robot.head_cam_link
-                cam_prim_path = f"{self.workspace_prim_path}/Robot/{self.task.robot.robot_ns}/{head_prim_link}"
+                cam_prim_path = f"{robot_root_path}/{head_prim_link}"
             else:
                 raise ValueError(f"Unsupported camera mount: {cam_info.mount}")
 
@@ -892,6 +920,16 @@ class IsaacSimSimulator(Simulator):
                 resolution=cam_info.resolution,
             )
             camera.initialize()
+            # Apply the camera pose (local offset + orientation) relative to its
+            # mount. Without this, link-mounted cameras (eye_in_head/hand) sit at
+            # the link origin inside the mesh and render black.
+            if cam_info.pose is not None:
+                pos = cam_info.pose.position or [0.0, 0.0, 0.0]
+                quat = cam_info.pose.quaternion or [1.0, 0.0, 0.0, 0.0]
+                try:
+                    camera.set_local_pose(pos, quat)
+                except Exception:
+                    camera.set_world_pose(pos, quat)
             self.cameras[cam_key] = camera
 
     def add_lights(self):

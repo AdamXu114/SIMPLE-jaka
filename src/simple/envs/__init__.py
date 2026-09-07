@@ -504,6 +504,124 @@ register(
 
 
 # task_register()
+# --- Jaka Khan Mini tasks ---
+# Bare simulation (robot + floor only, for ZMQ bridge / RL policy)
+register(
+    id="simple/JakaWholebodySim-v0",
+    entry_point="simple.envs.jaka_sim:JakaSimEnv",
+    kwargs={"task": "jaka_wholebody_sim"},
+)
+# Jaka tabletop teleop task (same pattern as G1 teleop tasks)
+register(
+    id="simple/JakaTabletopTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_tabletop_teleop"},
+)
+# Jaka tabletop pick / grasp a fixed object (no articulated trash can)
+register(
+    id="simple/JakaTabletopPickTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_tabletop_pick_teleop"},
+)
+
+# --- Jaka teleop tasks (mirror ALL G1 teleop tasks) ---
+register(
+    id="simple/JakaXMovePickTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_xmove_pick_teleop"},
+)
+register(
+    id="simple/JakaXMoveBendPickTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_xmove_bend_pick_teleop"},
+)
+register(
+    id="simple/JakaBendPickSimToRealTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_bend_pick_sim_to_real_teleop"},
+)
+register(
+    id="simple/JakaBendPickTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_bend_pick_teleop"},
+)
+register(
+    id="simple/JakaBendHandoverTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_bend_handover_teleop"},
+)
+register(
+    id="simple/JakaBendPickAndPlaceTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_bend_pick_and_place_teleop"},
+)
+register(
+    id="simple/JakaHandoverTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_handover_teleop"},
+)
+register(
+    id="simple/JakaCloseDoorTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_close_door_teleop"},
+)
+register(
+    id="simple/JakaOpenOvenTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_open_oven_teleop"},
+)
+register(
+    id="simple/JakaOpenFaucetTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_open_faucet_teleop"},
+)
+register(
+    id="simple/JakaPushOfficeChairTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_push_office_chair_teleop"},
+)
+register(
+    id="simple/JakaOpenTrashCanTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_open_trash_can_teleop"},
+)
+register(
+    id="simple/JakaPickAndPlaceAndHugContainerTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_pick_and_place_and_hug_container_teleop"},
+)
+register(
+    id="simple/JakaLocomotionPickBetweenTablesTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_locomotion_pick_between_tables_teleop"},
+)
+register(
+    id="simple/JakaXMovePickSimToRealTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_xmove_pick_sim_to_real_teleop"},
+)
+register(
+    id="simple/JakaPickAndPlaceAppleTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_pick_and_place_apple_teleop"},
+)
+register(
+    id="simple/JakaHandoverSimToRealTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_handover_sim_to_real_teleop"},
+)
+register(
+    id="simple/JakaHandoverPlaceBackSimToRealTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_handover_place_back_sim_to_real_teleop"},
+)
+register(
+    id="simple/JakaMobilePickAndPlaceCheezitTeleop-v0",
+    entry_point="simple.envs.loco_manipulation:LocoManipulationEnv",
+    kwargs={"task": "jaka_mobile_pick_and_place_cheezit_teleop"},
+)
+
 from .base_dual_env import BaseDualSim
 from .tabletop_grasp import TabletopGraspEnv
 from .loco_manipulation import LocoManipulationEnv
+from .jaka_sim import JakaSimEnv
