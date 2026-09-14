@@ -30,12 +30,12 @@ class LocoManipulationEnv(BaseDualSim):
         self, 
         task : str | Task, #
         sim_mode="mujoco_isaac",  # =SIM_MODE.MUJOCO_ISAAC
-        headless=True, 
-        *args, 
+        headless=True,
+        *args,
         **kwargs
     ) -> None:
         super().__init__(task, sim_mode, headless, *args, **kwargs)
-    
+
     def _get_obs(self):
         qpos = np.asarray(list(self.mujoco.get_robot_qpos().values()), dtype=np.float32)
         if self.isaac:
@@ -47,10 +47,10 @@ class LocoManipulationEnv(BaseDualSim):
         else:
             ...
 
-        return {
-            "joint_qpos": qpos,
-            ** self._render_frame()
-        }
+        obs = {"joint_qpos": qpos}
+        if self.obs_visual:
+            obs.update(self._render_frame())
+        return obs
     
     def _get_info(self):
         info = {}
@@ -82,19 +82,35 @@ class LocoManipulationEnv(BaseDualSim):
         return obs, info
     
     def step(self, action):
+        import time as _t
+        _dbg: dict[str, float] = {}
+        _t0 = _t.perf_counter()
         self.mujoco.apply_action(action)
-
-        self.mujoco.step()
+        _dbg["apply"] = (_t.perf_counter() - _t0) * 1000.0
+        _t0 = _t.perf_counter()
+        # render=False: discard the per-step scene render (obs comes from _get_obs, not the
+        # render) — this was ~11 ms/step of wasted rendering.
+        self.mujoco.step(render=False)
+        _dbg["sim"] = (_t.perf_counter() - _t0) * 1000.0
         if self.isaac:
             self.isaac.step(self.mujoco)
-        
-        self.step_count += 1
-        obs = self._get_obs()
-        info = self._get_info()
 
-        reward = self.task.compute_reward(info , mujoco_env=self.mujoco)
+        self.step_count += 1
+        _t0 = _t.perf_counter()
+        obs = self._get_obs()
+        _dbg["obs"] = (_t.perf_counter() - _t0) * 1000.0
+        _t0 = _t.perf_counter()
+        info = self._get_info()
+        _dbg["info"] = (_t.perf_counter() - _t0) * 1000.0
+
+        _t0 = _t.perf_counter()
+        reward = self.task.compute_reward(info, mujoco_env=self.mujoco)
+        _dbg["reward"] = (_t.perf_counter() - _t0) * 1000.0
+        _t0 = _t.perf_counter()
         terminated = self.task.check_success(info, mujoco_env=self.mujoco)
-        
+        _dbg["success"] = (_t.perf_counter() - _t0) * 1000.0
+        self.dbg_ms = _dbg
+
         truncated = False
         self._success = terminated
         return obs, reward, terminated, truncated, info

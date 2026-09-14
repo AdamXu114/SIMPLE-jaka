@@ -367,15 +367,20 @@ class BasePolicy:
     def process_controllers(self) -> None:
         if self.joystick_controller is not None:
             self.wc_msg = self.joystick_controller.state
-        mode = self.controller.get_control_mode()
-        if mode == "policy":
-            self.set_policy_mode(source=self.controller.name)
-        elif mode == "zero":
-            self.set_zero_mode(source=self.controller.name)
-        elif mode == "init":
-            self.set_init_mode(source=self.controller.name)
-        elif mode == "align":
-            self.set_align_mode(source=self.controller.name)
+        # ── 模式切换已禁用 ─────────────────────────────────────────────────────
+        # 现在由调用方(teleop_jaka_mf)在启动 / 录制结束时直接 set_policy_mode(),
+        # 默认就锁定在 policy;这里不再响应 pico 手柄 / 键盘 的模式切换。
+        # 原因:录制开关用的就是 pico A 键,而 A 同时映射到 init,会把机器人切出
+        # policy。恢复时取消下面注释即可。
+        mode = self.controller.get_control_mode()  # 仍然读取(顺带排空输入队列),但不用于切模式
+        # if mode == "policy":
+        #     self.set_policy_mode(source=self.controller.name)
+        # elif mode == "zero":
+        #     self.set_zero_mode(source=self.controller.name)
+        # elif mode == "init":
+        #     self.set_init_mode(source=self.controller.name)
+        # elif mode == "align":
+        #     self.set_align_mode(source=self.controller.name)
 
         # Space toggles reference playback (matches sim2real Tracking).
         extra_keys = self.controller.get_extra_keys()

@@ -40,16 +40,20 @@ class BaseDualSim(gym.Env):
     
 
     def __init__(
-        self, 
-        task: str | Task, 
+        self,
+        task: str | Task,
         sim_mode="mujoco_isaac",  # =SIM_MODE.MUJOCO_ISAAC
-        headless=True, 
+        headless=True,
         webrtc=False,
-        *args, 
+        obs_visual: bool = True,
+        *args,
         **kwargs
     ) -> None:
         self.headless = headless
         self.webrtc = webrtc
+        # Whole-body MF agents read state from mjData and ignore the image obs; set False to
+        # skip the (~7 ms/step) camera render in _get_obs AND shrink observation_space to joints.
+        self.obs_visual = obs_visual
         if "isaac" in sim_mode:
             if not _ISAAC_LOADED:
                 self._init_isaac(headless, webrtc)
@@ -74,6 +78,10 @@ class BaseDualSim(gym.Env):
         
         self.action_space = self.task.action_space
         self.observation_space = self.task.observation_space
+        if not self.obs_visual:
+            self.observation_space = gym.spaces.Dict(
+                {"joint_qpos": self.task.observation_space["joint_qpos"]}
+            )
 
     def _init_isaac(self, headless:bool, webrtc:bool = False):
         global _ISAAC_LOADED, _SIMULATION_APP

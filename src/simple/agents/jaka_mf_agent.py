@@ -113,6 +113,16 @@ class JakaMFAgent(BaseAgent):
         """Reset per-episode policy state (history, ref-init, prev action)."""
         self.policy.reset()
 
+    def rebind_bridge(self) -> None:
+        """Re-point the PD bridge at the robot's current ``mjModel``/``mjData``.
+
+        Call after ``env.reset()``, which recompiles the MuJoCo model: the bridge is
+        mutated in place, so the policy's ``action_manager.bridge`` (same object) and
+        ``robot._mf_bridge`` all follow, and ``has_received_command`` stays True.
+        """
+        self._bridge.rebind(self.robot.mjModel, self.robot.mjData)
+        self.robot.attach_mf_bridge(self._bridge)
+
     def close(self) -> None:
         try:
             self.policy.close()

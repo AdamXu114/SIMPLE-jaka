@@ -941,7 +941,7 @@ class CuRoboPlanner(MotionPlanner):
                     name=f"{key}_{obj.uid}",
                     pose=transform_to_robot_frame(obj.pose.as_vec()),
                     file_path=os.path.abspath(obj.asset.collision_mesh_curobo),
-                    scale=[1.0, 1.0, 1.0],
+                    scale=[getattr(obj.asset, "scale", 1.0)] * 3,
                 )
             world_cfg.add_obstacle(mesh_cfg)
         # world_cfg.save_world_as_mesh("test.obj")

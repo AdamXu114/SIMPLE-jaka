@@ -64,7 +64,8 @@ class ObjaverseAsset(Asset, SemanticAnnotated,SpatialAnnotated):
         collision_meshes_mujoco: list[str],
         description: str | None = None,
         stable_poses: dict[str, Pose] | None = None,
-        
+        scale: float = 1.0,
+
     ) -> None:
         super().__init__(uid=uid, usd_path=usd_path, collision_mesh_curobo = collision_mesh_curobo, collision_meshes_mujoco=collision_meshes_mujoco)
         
@@ -74,6 +75,8 @@ class ObjaverseAsset(Asset, SemanticAnnotated,SpatialAnnotated):
         self.label = label
         self.description = description
         self.stable_poses = stable_poses
+        # Uniform scale of the meshes above (1.0 = the size produced by data prep).
+        self.scale = scale
 
 
     def __repr__(self) -> str:

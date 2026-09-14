@@ -81,8 +81,11 @@ class ONNXModule:
             raise RuntimeError(
                 f"Requested provider {requested[0]} is not available. available={available}"
             )
-
-        self.ort_session = ort.InferenceSession(path, providers=requested)
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 4
+        sess_options.inter_op_num_threads = 2
+        self.ort_session = ort.InferenceSession(path,sess_options, providers=requested)
+        # self.ort_session = ort.InferenceSession(path, providers=requested)
         active_providers = self.ort_session.get_providers()
         if requested[0] not in active_providers:
             raise RuntimeError(

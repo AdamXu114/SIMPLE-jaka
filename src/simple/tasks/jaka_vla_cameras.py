@@ -30,8 +30,8 @@ def jaka_vla_sensor_cfgs() -> dict[str, SensorCfg]:
         "head_stereo": StereoCameraCfg(
             uid="Realsense_D435i",
             mount="eye_in_head",
-            width=640,
-            height=360,
+            width=224,
+            height=224,
             focal_length=1.93,
             fov=np.deg2rad(110),
             near=0.2,

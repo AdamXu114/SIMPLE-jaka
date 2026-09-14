@@ -9,11 +9,13 @@ Modules:
   - messages: Shared binary message types (LowStateMessage, LowCmdMessage)
 """
 
+from .jaka_zmq_pub import JakaTeleopZmqPublisher
 from .messages import LowCmdMessage, LowStateMessage
 from .sim_server import SimulationServer
 from .zmq_bridge import ZMQSimBridge
 
 __all__ = [
+    "JakaTeleopZmqPublisher",
     "LowCmdMessage",
     "LowStateMessage",
     "SimulationServer",

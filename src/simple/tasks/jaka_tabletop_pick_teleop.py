@@ -60,7 +60,8 @@ class JakaTabletopPickTeleop(Task):
             instructions=["pick up the object on the tabletop."],
         ),
         # Fixed, manually-chosen target object (edit this line to change the object).
-        target=TargetDRCfg(asset_id="objaverse:1128"),
+        # scale 1.5: 该资产归一化后是 0.2m 立方体 → 边长 0.3m
+        target=TargetDRCfg(asset_id="objaverse:425", scale=1.2),#原为1128
         # Random distractors DISABLED for now: only the fixed target sits on the
         # table. Set number_of_distractors >= 1 to re-enable.
         distractors=DistractorDRCfg(
@@ -77,15 +78,18 @@ class JakaTabletopPickTeleop(Task):
             # (robot base x≈-1.45, table center x=0.6 → near half is x<0.6).
             # Keep the low bound ≥0.4 so the 0.2-long box stays fully on the
             # tabletop (tune the high bound if you want it more centered).
-            target_region=Box(low=[0.1, 0.], high=[0.1, 0.]),
+            target_region=Box(low=[-0.1, 0.], high=[-0.1, 0.]),
             distractors_region=Box(low=[0.4, -0.3], high=[0.6, 0.3]),
             target_stable_indices=[0],
-            target_rotate_z=Box(low=-0.15, high=0.15),
+            # low == high → no yaw jitter: the box keeps the exact orientation
+            # of stable pose 0 (fixed world orientation).
+            target_rotate_z=Box(low=0.0, high=0.0),
         ),
         camera=CameraDRCfg(cam_id="jaka_camera"),
         scene=TabletopSceneDRCfg(
             table_position=Box(low=[0.6, 0], high=[0.6, 0]),
-            table_height=Box(low=0.67, high=0.68),
+            # Tabletop height above the floor (was 0.67–0.68).
+            table_height=Box(low=0.60, high=0.61),
             room_choices=["hssd:scene4"],
             scene_manager="hssd",
         ),

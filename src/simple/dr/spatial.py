@@ -238,8 +238,12 @@ class SpatialDR(Randomizer):
 
 
     def _random_place_one_object(self, obj: Object, region: Box, objtype: str, surface_height: float = 0.0):
-        
+
+        obj_scale = getattr(obj.asset, "scale", 1.0)
         object_msh=trimesh.load_mesh(obj.asset.collision_mesh_curobo)
+        if obj_scale != 1.0:
+            # keep the collision-check mesh consistent with the scaled geometry
+            object_msh.apply_scale(obj_scale)
         for _ in range(self.cfg.placement_attempts):
             if objtype == "container":
                 stable_pose = obj.asset.stable_poses[0] # only use the first stable pose for container
@@ -253,7 +257,9 @@ class SpatialDR(Randomizer):
                     stable_pose = random.choice(obj.asset.stable_poses)
             p = np.zeros((3,), dtype=np.float32)
             p[:2] += np.asarray(region.sample(), dtype=np.float32) # random xy
-            p[2] = stable_pose[2] + surface_height
+            # the stable pose gives the mesh-origin height above the support
+            # surface, so it scales with the mesh
+            p[2] = stable_pose[2] * obj_scale + surface_height
             obj.pose.position = p.tolist()
             # print(f"Trying to place object {obj.uid} at position {p.tolist()}")
             

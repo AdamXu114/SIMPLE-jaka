@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     
 
 import numpy as np
+import time
 from simple.core.simulator import Simulator
 
 from simple.core.object import SemanticAnnotated # , Object, SpatialAnnotated
@@ -48,6 +49,22 @@ class MujocoSimulator(Simulator):
         self.viewer_show_left_ui: bool | None = None   # None = mujoco default (True)
         self.viewer_show_right_ui: bool | None = None
         self.viewer_track_body: str | None = None       # e.g. "base_link" (tracking cam)
+        # Fix the viewer to a camera DEFINED IN THE MODEL (e.g. "head_stereo_left" ->
+        # first-person view from the robot head). Takes precedence over
+        # viewer_track_body. Because env.reset() recompiles the model and relaunches
+        # the window, this is re-applied on every (re)launch -- so the view is
+        # deterministic across resets instead of jumping back to the default.
+        self.viewer_fixed_camera: str | None = None
+        # Throttle the (expensive) on-screen viewer.sync() so the display refreshes at a
+        # lower rate than the physics/control loop (1 = sync every step). Tunes the
+        # trade-off: full-rate rendering is ~20 ms/step on a windowed display; syncing
+        # every K steps keeps control at the rl_rate budget but shows the window at a
+        # lower Hz. Set via CLI (e.g. --viewer-hz 25).
+        self.viewer_sync_interval = 1
+        # per-step sub-timing debug (ms) for the loop bottleneck trace.
+        self.dbg_ms_physics = 0.0
+        self.dbg_ms_sync = 0.0
+        self.dbg_ms_obj = 0.0
 
         # TODO move to reset? 
         # self.mj_physics = None
@@ -72,6 +89,7 @@ class MujocoSimulator(Simulator):
         self._setup_scene(**kwargs)
 
     def step(self, render=True, render_robot_mask=False, **kwargs) -> Dict[str, np.ndarray] | None:
+        _t0 = time.perf_counter()
         if self.need_gravity:
             if self.task.robot.command is None:# probably resetting?
                 mujoco.mj_step(self.mjModel, self.mjData, nstep=1)
@@ -83,10 +101,12 @@ class MujocoSimulator(Simulator):
             num_physics_steps = int(((self.render_step + 1) / self.render_hz - current_physics_time) // timestep)
             assert num_physics_steps > 0 and num_physics_steps < 100000, "warning: why so many physics steps?"
             mujoco.mj_step(self.mjModel, self.mjData, nstep=num_physics_steps)
+        _t1 = time.perf_counter()
 
         self.render_step += 1
-        if self.viewer is not None:
+        if self.viewer is not None and self.render_step % max(1, int(self.viewer_sync_interval)) == 0:
             self.viewer.sync()
+        _t2 = time.perf_counter()
 
         # updata self.task.layout.objects pose, at beginning few steps don't update
         if self.render_step > 5:
@@ -95,6 +115,11 @@ class MujocoSimulator(Simulator):
                 self.task.layout.actors[objtype].pose.quaternion = list(mj_obj.xquat)
             self.task.layout.actors["robot"].pose.position = list(np.round(self.mjData.qpos[:3], 3))
             self.task.layout.actors["robot"].pose.quaternion = list(np.round(self.mjData.qpos[3:7], 3))
+        _t3 = time.perf_counter()
+
+        self.dbg_ms_physics = (_t1 - _t0) * 1000.0
+        self.dbg_ms_sync = (_t2 - _t1) * 1000.0
+        self.dbg_ms_obj = (_t3 - _t2) * 1000.0
 
         if render:
             return self.render(render_robot_mask)
@@ -280,7 +305,14 @@ class MujocoSimulator(Simulator):
             ) # type: ignore
 
         if not self._is_sonic:
+            # 关窗前先存下旧 viewer 的自由相机参数,重开后还原(视角不跳)。
+            saved_cam = None
             if self.viewer is not None:
+                _c = self.viewer.cam
+                saved_cam = (
+                    float(_c.distance), float(_c.azimuth), float(_c.elevation),
+                    np.array(_c.lookat, dtype=float).copy(),
+                )
                 self.viewer.close()
 
             if not self.headless:
@@ -301,14 +333,36 @@ class MujocoSimulator(Simulator):
                         else True
                     ),
                 )
-                # Tracking camera on a body (sim2real-style) if requested.
-                if self.viewer_track_body:
+                # 重开后恢复相机视角,优先级:
+                #   1) 固定到模型里的某个相机(viewer_fixed_camera,如头相机)
+                #   2) 跟踪某个 body(viewer_track_body,sim2real 风格)
+                #   3) 还原关窗前的自由相机参数(上面 saved_cam)
+                applied = False
+                if self.viewer_fixed_camera:
+                    cid = mujoco.mj_name2id(
+                        self.mjModel, mujoco.mjtObj.mjOBJ_CAMERA, self.viewer_fixed_camera
+                    )
+                    if cid >= 0:
+                        self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+                        self.viewer.cam.fixedcamid = int(cid)
+                        applied = True
+                    else:
+                        print(f"[viewer] 未找到相机 '{self.viewer_fixed_camera}',"
+                              " 回退到默认视角")
+                if not applied and self.viewer_track_body:
                     bid = mujoco.mj_name2id(
                         self.mjModel, mujoco.mjtObj.mjOBJ_BODY, self.viewer_track_body
                     )
                     if bid >= 0:
                         self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
                         self.viewer.cam.trackbodyid = int(bid)
+                        applied = True
+                if not applied and saved_cam is not None:
+                    d, az, el, look = saved_cam
+                    self.viewer.cam.distance = d
+                    self.viewer.cam.azimuth = az
+                    self.viewer.cam.elevation = el
+                    self.viewer.cam.lookat[:] = look
 
         # ?. reset render step
         self.render_step = 0
@@ -326,10 +380,15 @@ class MujocoSimulator(Simulator):
             label = actor.asset.label
             name = actor.asset.name
 
+        # mesh scale is about the mesh frame origin, matching how the spatial DR
+        # scales the stable pose height (see SpatialDR._random_place_one_object)
+        scale = getattr(actor.asset, "scale", 1.0)
+
         for i in range(num_convex):
             mjSpec.add_mesh(
-                name=f'{label}_mesh_convex{i}', 
+                name=f'{label}_mesh_convex{i}',
                 file=collision_meshes[i],
+                scale=[scale, scale, scale],
             )
 
         mj_obj=mjWorld.add_body(
@@ -348,10 +407,10 @@ class MujocoSimulator(Simulator):
                 # and rotation around the two axes of the tangent plane
                 condim=4,  
                 # total mass 0.1 helps preventing slipping
-                mass=0.1/num_convex, 
+                mass=0.3/num_convex, 
                 # rubber on rough ground: large static, sliding and torisonal friction
                 friction=[0.8, 0.05, 0.005],  
-                rgba=[1, 1, 1, 1],
+                rgba=[1, 0, 0, 1],
                 # stiff contact and no oscillation
                 solref = [0.005, 2]
             )

@@ -402,6 +402,10 @@ JOINT_POS_KEY = "joint_pos"
 JOINT_VEL_KEY = "joint_vel"
 BODY_POS_W_KEY = "body_pos_w"
 BODY_QUAT_W_KEY = "body_quat_w"
+# Broadcast by pico_retarget_pub on the motion stream: a *persistent* level
+# (``[bool]``) the publisher flips on the PICO A button, telling subscribers
+# whether data collection is requested. The recorder follows this level.
+TOGGLE_DATA_COLLECTION_KEY = "toggle_data_collection"
 
 
 def default_qpos_np() -> "object":
@@ -445,4 +449,5 @@ __all__ = [
     "JOINT_VEL_KEY",
     "BODY_POS_W_KEY",
     "BODY_QUAT_W_KEY",
+    "TOGGLE_DATA_COLLECTION_KEY",
 ]

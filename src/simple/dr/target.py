@@ -35,7 +35,7 @@ class TargetDR(Randomizer):
         self._inner_state =  AssetManager.get(state_dict["res_id"]).load(state_dict["uid"])
 
     def __call__(self, split: str, **kwargs) -> Asset:
-        
+
         # res_id, obj_id = self.asset_id.split(':')
         asset = AssetManager.get(self.res_id).load(self.obj_id)
         # return self.object
@@ -43,11 +43,19 @@ class TargetDR(Randomizer):
         # if self.rand_stable_pose:
         #     ...
 
+        scale = getattr(self.cfg, "scale", None)
+        if scale is not None:
+            asset.scale = scale
+
         return super()._transient(asset)
 
 @dataclass
 class TargetDRCfg(RandomizerCfg):
     asset_id: str | None = None  # e.g., "res_id:obj_id"
+    # Uniform scale applied to the asset mesh (None keeps the asset's own size).
+    # The asset is normalized at data-prep time, so check its actual edge length
+    # (e.g. data/assets/objaverse/<id>/mesh/normalized.obj) to pick the factor.
+    scale: float | None = None
     randmizer_class: Type[Randomizer] = TargetDR
 
     # def __init__(self, asset_id) -> None:

@@ -246,6 +246,22 @@ class ZMQSimBridge:
         except zmq.Again:
             pass
 
+    def rebind(self, mj_model: mujoco.MjModel, mj_data: mujoco.MjData) -> None:
+        """Re-point at a freshly compiled model/data pair.
+
+        ``MujocoSimulator._setup_scene`` (run by ``env.reset()``) recompiles
+        ``mjModel``/``mjData``, so the object refs and the qpos/qvel/actuator addresses
+        resolved in :meth:`__init__` go stale. Without this, :meth:`apply_pd` would write
+        torques into the *dead* ``MjData`` and the new simulation would receive zero
+        torque — the robot would simply go limp after a reset.
+
+        Command buffers, gains, and ``has_received_command`` are preserved, and the ZMQ
+        sockets are untouched (only the MuJoCo indices are re-resolved).
+        """
+        self.mj_model = mj_model
+        self.mj_data = mj_data
+        self._init_mujoco_indices()
+
     def get_joint_positions(self) -> np.ndarray:
         """Return the 27 joint positions in ``joint_names`` order.
 
