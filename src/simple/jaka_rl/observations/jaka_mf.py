@@ -28,27 +28,8 @@ from simple.jaka_rl.observations.base import Observation
 
 
 # ──────────────────── Single-quaternion helpers (reset only) ────────────── #
-
-def _quat_mul_single(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
-    w1, x1, y1, z1 = q1
-    w2, x2, y2, z2 = q2
-    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
-    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
-    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
-    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
-    return np.array([w, x, y, z])
-
-
-def _quat_inv_single(q: np.ndarray) -> np.ndarray:
-    conj = np.array([q[0], -q[1], -q[2], -q[3]])
-    norm_sq = max(np.sum(q**2), 1e-9)
-    return conj / norm_sq
-
-
-def _yaw_quat_single(q: np.ndarray) -> np.ndarray:
-    w, x, y, z = q
-    yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y**2 + z**2))
-    return np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)])
+# (the first-frame yaw alignment itself lives in the motion buffer now — see
+# RealtimeMotionBuffer._update_align_quat — and reaches us as motion_data.align_quat)
 
 
 class jaka_frame_stack_mf(Observation):
@@ -97,13 +78,11 @@ class jaka_frame_stack_mf(Observation):
                 idx = self.isaaclab_joint_names.index(jname)
                 self.default_angles_isaaclab[idx] = float(jval)
 
-        self.ref_to_robot_quat_init = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        # Whether ref_to_robot_quat_init has been aligned. Reset() may run before
-        # the live zMQ motion stream has ANY frame, in which case the buffer
-        # returns the FK default posture (identity yaw) — aligning against that
-        # would lock in a wrong reference orientation. Instead we defer and align
-        # on the FIRST real motion frame, using the robot's orientation then.
-        self._ref_init_done = False
+        # Yaw alignment of the reference onto the robot's heading. Computed by the
+        # motion buffer (RealtimeMotionBuffer._update_align_quat) on each
+        # empty -> non-empty edge of the stream and delivered in MotionData as
+        # ``align_quat``; identity when the source has none (npz / raw_npz).
+        self._identity_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
         self._frame_buffer: deque = deque(maxlen=self._STACK_SIZE)
         self._is_first_frame = True
@@ -131,57 +110,26 @@ class jaka_frame_stack_mf(Observation):
 
         self._cached_motion_layout = layout
 
-    def _motion_has_real_data(self) -> bool:
-        """True if the motion source has actual frames (not the empty-buffer FK
-        default posture). For npz/raw_npz the source is always real; for zmq we
-        look at whether the live buffer has received a frame yet."""
-        sp = self.state_processor
-        mb = getattr(sp, "motion_buffer", None)
-        if mb is None:
-            # npz / raw_npz backends always carry real motion data.
-            return sp.motion_data is not None
-        return mb.latest_timestamp_ns is not None
+    def _align_quat(self, motion_data) -> np.ndarray:
+        """Reference->robot yaw alignment for this step, from the motion buffer.
 
-    def _align_ref_to_robot(self) -> None:
-        """Align the reference motion's yaw to the robot's CURRENT orientation.
-
-        Called when the first real motion frame is available. The reference's
-        anchor (waist_yaw_Link) yaw is offset so the robot tracks the motion
-        relative to its own heading rather than an absolute world yaw. Only the
-        yaw is aligned (pitch/roll of the reference are preserved).
+        The buffer owns the first-frame alignment (it is the side that sees the
+        stream go empty -> non-empty); it ships the result as ``MotionData.align_quat``,
+        shaped ``(1, 4)``. Sources without one (npz / raw_npz, or a buffer that could
+        not read the robot heading) fall back to identity, so this never raises.
         """
-        sp = self.state_processor
-        motion_data = sp.motion_data
-        if motion_data is None:
-            return
-        self._refresh_motion_indices()
-        ref_anchor_quat = motion_data.body_quat_w[0, 0, self.resolved_anchor_body_index]
-        ref_init_yaw = _yaw_quat_single(ref_anchor_quat)
-        ref_init_yaw_inv = _quat_inv_single(ref_init_yaw)
-
-        # sp.root_quat_w is the waist_yaw_Link quaternion (IMU framequat) — the
-        # robot's orientation at the moment the first real frame becomes usable.
-        robot_anchor_quat = sp.root_quat_w.copy()
-        robot_init_yaw = _yaw_quat_single(robot_anchor_quat)
-        self.ref_to_robot_quat_init = _quat_mul_single(robot_init_yaw, ref_init_yaw_inv)
-        self._ref_init_done = True
+        align = getattr(motion_data, "align_quat", None)
+        if align is None:
+            return self._identity_quat
+        return np.asarray(align, dtype=np.float32).reshape(-1)[:4]
 
     def reset(self):
         self._frame_buffer.clear()
         for _ in range(self._STACK_SIZE):
             self._frame_buffer.append(np.zeros(self._FRAME_DIM, dtype=np.float32))
         self._is_first_frame = True
-        self._ref_init_done = False
-        if self._motion_has_real_data():
-            self._align_ref_to_robot()
-        else:
-            # No real motion frame yet (e.g. empty zMQ buffer). Hold identity and
-            # defer the alignment to the first real frame (see update()).
-            self.ref_to_robot_quat_init = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
     def update(self, data: Dict[str, Any]) -> None:
-        if not self._ref_init_done and self._motion_has_real_data():
-            self._align_ref_to_robot()
         obs = self._compute_single_frame(data)
         if self._is_first_frame:
             for _ in range(self._STACK_SIZE):
@@ -264,10 +212,12 @@ class jaka_frame_stack_mf(Observation):
         anchor_idx = self.resolved_anchor_body_index
 
         ref_quat_all = motion_data.body_quat_w[0, :, anchor_idx]
-        ref_to_robot_init_batch = np.tile(
-            self.ref_to_robot_quat_init[None, :], (self._NUM_FUTURE_STEPS, 1)
+        # Reference -> robot yaw alignment, owned by the motion buffer:
+        #   anchor_world = align_quat * ref_quat   (C++ FSMMimicJakaMiniZmq.cpp:242)
+        align_batch = np.tile(
+            self._align_quat(motion_data)[None, :], (self._NUM_FUTURE_STEPS, 1)
         )
-        future_anchor_quat_w = quat_mul(ref_to_robot_init_batch, ref_quat_all)  # [5, 4]
+        future_anchor_quat_w = quat_mul(align_batch, ref_quat_all)  # [5, 4]
 
         robot_anchor_quat_batch = np.tile(
             robot_anchor_quat[None, :], (self._NUM_FUTURE_STEPS, 1)

@@ -26,8 +26,15 @@ import zmq
 
 from loguru import logger
 
-from simple.jaka_rl.config import TOGGLE_DATA_COLLECTION_KEY
-from simple.jaka_rl.math import quat_normalize, quat_slerp_batch
+from simple.jaka_rl.config import ANCHOR_BODY, TOGGLE_DATA_COLLECTION_KEY
+from simple.jaka_rl.math import (
+    quat_conjugate,
+    quat_mul,
+    quat_normalize,
+    quat_slerp_batch,
+    yaw_from_quat,
+    yaw_quat,
+)
 from simple.jaka_rl.motion import MotionData
 
 _normalize_quat_batch = quat_normalize
@@ -80,6 +87,7 @@ class RealtimeMotionBuffer:
         motion_zmq_hwm: int = 1,
         dt_s: float = 0.02,
         tolerance_s: float = 0.04,
+        align_first_frame_yaw: bool = True,
     ):
         if dt_s <= 0.0:
             raise ValueError("dt_s must be positive")
@@ -137,6 +145,20 @@ class RealtimeMotionBuffer:
         self._diag_buffered = 0
         self._collapsed_warned = False
         self._collapsed_warned_at = 0.0
+
+        # ── First-frame yaw alignment (see _compute_align_quat) ───────────
+        # Mirrors the C++ deployment (doc/RealtimeMotionBuffer.cpp +
+        # doc/FSMMimicJakaMiniZmq.cpp): ``align_quat`` is (re)computed whenever the
+        # buffer goes empty -> non-empty, and handed to the observation through
+        # MotionData. The live robot model/data the caller already passes is what
+        # lets us read the robot's own heading here — read-only, never stepped.
+        self._mj_model = mj_model
+        self._mj_data = mj_data
+        self.align_first_frame_yaw = bool(align_first_frame_yaw)
+        self._align_quat: np.ndarray | None = None   # (4,) wxyz, identity until first frame
+        self._align_yaw_deg: float | None = None
+        self._ready_prev = False                     # buffer non-empty on the previous get_obs
+        self._align_warned = False
 
         self._init_default_posture(
             mj_model=mj_model,
@@ -267,6 +289,95 @@ class RealtimeMotionBuffer:
         self._motion_stream_thread = threading.Thread(target=_stream_loop, daemon=True)
         self._motion_stream_thread.start()
 
+    # ------------------------------------------------------------------
+    # First-frame yaw alignment (C++ deployment parity)
+    # ------------------------------------------------------------------
+    def _anchor_index(self) -> int | None:
+        """Index of the reference anchor (``waist_yaw_Link``) in the served body list."""
+        try:
+            return self.body_names.index(ANCHOR_BODY)
+        except ValueError:
+            return None
+
+    def _robot_anchor_quat(self) -> np.ndarray | None:
+        """The robot's CURRENT anchor-body world quat, read from the live MjData.
+
+        Equivalent of the C++ ``zmq_robot_quat_from_imu()``: ``waist_yaw_Link``
+        carries the ``waist_imu`` site at its origin with identity orientation, so
+        the body quat *is* the IMU framequat the observation uses for the robot too.
+        Read-only — this MjData belongs to the running simulation, so we never run
+        FK on it. Returns None (alignment is then skipped and logged) when the model
+        is missing or the values look invalid.
+        """
+        if self._mj_model is None or self._mj_data is None:
+            return None
+        try:
+            bid = mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, ANCHOR_BODY)
+            if bid < 0:
+                return None
+            quat = np.asarray(self._mj_data.xquat[bid], dtype=np.float64).copy()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not read the robot anchor quat for yaw alignment: {exc}")
+            return None
+        norm = float(np.linalg.norm(quat))
+        if not np.all(np.isfinite(quat)) or norm < 1e-6:
+            return None
+        return (quat / norm).astype(np.float32)
+
+    def _compute_align_quat(self, ref_quat: np.ndarray | None) -> np.ndarray | None:
+        """``align_quat = yaw(robot) * yaw(reference)^-1`` — C++ FSMMimicJakaMiniZmq.cpp:181-186.
+
+        Only the yaw of each side is kept (roll/pitch of the reference are preserved
+        untouched, as the C++ does), so this is a pure world-z rotation mapping the
+        reference heading onto the robot's heading at the moment it is computed.
+        """
+        robot_quat = self._robot_anchor_quat()
+        if robot_quat is None or ref_quat is None:
+            if not self._align_warned:
+                self._align_warned = True
+                logger.warning(
+                    "First-frame yaw alignment unavailable: no readable live robot "
+                    "model/data (or no reference anchor) — align_quat stays identity."
+                )
+            return None
+        rob_yaw = yaw_quat(np.asarray(robot_quat, dtype=np.float64))
+        ref_yaw = yaw_quat(np.asarray(ref_quat, dtype=np.float64))
+        align = quat_mul(
+            np.asarray(rob_yaw, dtype=np.float32).reshape(1, 4),
+            np.asarray(quat_conjugate(ref_yaw), dtype=np.float32).reshape(1, 4),
+        ).reshape(4)
+        align = quat_normalize(align.reshape(1, 4)).reshape(4)
+        self._align_yaw_deg = float(
+            np.rad2deg(np.asarray(yaw_from_quat(align)).reshape(-1)[0])
+        )
+        return align.astype(np.float32)
+
+    def _update_align_quat(self, first_frame_quat: np.ndarray | None) -> None:
+        """(Re)compute ``align_quat`` on the buffer's empty -> non-empty edge.
+
+        Mirrors the two triggers in the C++ FSM (:408-416 on entry, :418-427 on the
+        first package arrival): the first call (nothing buffered yet, so the window
+        is the FK default posture — same as the C++ entry case) and every transition
+        from empty to non-empty, which includes after ``clear()``.
+        """
+        if not self.align_first_frame_yaw:
+            return
+        ready = bool(self._timestamps_ns)
+        first_call = self._align_quat is None
+        if (ready and not self._ready_prev) or first_call:
+            print("//////////////align quat//////////////////")
+            align = self._compute_align_quat(first_frame_quat)
+            if align is not None:
+                self._align_quat = align
+                logger.info(
+                    "align_quat {:+.1f} deg (robot yaw - reference yaw) — computed {}.",
+                    self._align_yaw_deg,
+                    "on the empty -> non-empty edge"
+                    if not first_call
+                    else "on the first get_obs",
+                )
+        self._ready_prev = ready
+
     def __append_payload(
         self,
         payload: dict[str, Any] | str | bytes,
@@ -314,6 +425,10 @@ class RealtimeMotionBuffer:
 
         body_pos_w = payload.get("body_pos_w", None)
         body_quat_w = payload.get("body_quat_w", None)
+
+
+        # print("//////////////body_pos_w//////////////////", body_pos_w)
+        # print("//////////////body_quat_w//////////////////", body_quat_w)
         if body_pos_w is None or body_quat_w is None:
             raise ValueError("Payload missing body_pos_w/body_quat_w")
 
@@ -441,6 +556,8 @@ class RealtimeMotionBuffer:
                 "jump_recent_m": max(self._jump_bucket_m, self._jump_bucket_prev_m),
                 "delay_ms": self._delay_ns / 1e6,
                 "history_ms": self._history_ns / 1e6,
+                "aligned": self._align_quat is not None,
+                "align_yaw_deg": self._align_yaw_deg,
             }
 
     def _update_toggle_data_collection(self, payload: dict[str, Any]) -> None:
@@ -552,6 +669,14 @@ class RealtimeMotionBuffer:
             self._joint_pos_frames.clear()
             self._body_pos_w_frames.clear()
             self._body_quat_w_frames.clear()
+        # Re-arm the yaw alignment: the next batch of frames is a fresh reference, so
+        # the empty -> non-empty edge fires again (the C++ re-aligns the same way).
+        # Dropping the value (rather than keeping it) matters for the in-between
+        # window: while empty we serve the FK default posture, and it must be aligned
+        # by its own yaw (-> yaw(robot)), not by the previous reference's delta.
+        self._ready_prev = False
+        self._align_quat = None
+        self._align_yaw_deg = None
 
     def _warn_if_lookahead_collapsed(self) -> None:
         """Warn (rate-limited) when the look-ahead window has collapsed to one frame.
@@ -562,7 +687,10 @@ class RealtimeMotionBuffer:
         outright. Worth surfacing because nothing else in the pipeline signals it.
         """
         s = self.diagnostics()
-        if s["payloads"] == 0 or s["window_frames"] > 1:
+        # An empty buffer is a *different* state ("no data yet" — before the publisher
+        # starts, or right after clear()), not a collapse: the window then holds the FK
+        # default posture by design. Only warn once there ARE frames to interpolate.
+        if s["payloads"] == 0 or s["buffered"] == 0 or s["window_frames"] > 1:
             self._collapsed_warned = False
             return
         now = time.monotonic()
@@ -614,6 +742,20 @@ class RealtimeMotionBuffer:
 
         self._warn_if_lookahead_collapsed()
 
+        # Yaw alignment: (re)computed right here, on the empty -> non-empty edge,
+        # exactly like the C++ FSM does around its get_obs() call. The reference
+        # sample is this window's first step — the frame the C++ uses
+        # (`frames[0].root_quat_w`).
+        anchor_idx = self._anchor_index()
+        self._update_align_quat(
+            None if anchor_idx is None else body_quat_w[0, 0, anchor_idx]
+        )
+        align_quat = (
+            self._identity_quat.reshape(1, 4)
+            if self._align_quat is None
+            else self._align_quat.reshape(1, 4)
+        )
+
         return MotionData(
             motion_id=self._motion_id_template,
             step=self._step_template,
@@ -624,6 +766,9 @@ class RealtimeMotionBuffer:
             body_lin_vel_w=body_lin_vel_w,
             body_quat_w=body_quat_w,
             body_ang_vel_w=body_ang_vel_w,
+            # (1, 4) so MotionData.__getitem__'s ndarray-only filter keeps it and
+            # slices the batch dim rather than a component.
+            align_quat=align_quat,
         )
 
     def get_latest_frame(self) -> Optional[LatestMotionFrame]:

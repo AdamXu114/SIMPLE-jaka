@@ -6,7 +6,7 @@ publishes state + head camera over ZMQ; see ``state_zmq_bind`` / ``camera_zmq_bi
 in ``data/jaka_mf/teleop_jaka_mf.yaml``).
 Instead of holding the sim/control loop, this **separate process** subscribes over ZMQ
 to the *latest* frame of each stream and writes the openhlm LeRobot format (30-dim
-state + 40-dim actions + RAW-resolution head image, 640x360 — the training side resizes).
+state + 40-dim actions + RAW-resolution head image — the training side resizes).
 
 Streams it reads (all "latest-only", drained each loop so state/action/image are
 from the same wall-clock instant):
@@ -36,7 +36,10 @@ Usage (run the sim/control in another terminal)::
         --frequency 30 \\
         --policy-config data/jaka_mf/latest56k_pico_dr.yaml
 
-Note: ``<save-dir>/level-<dr-level>`` is **wiped** on startup (``shutil.rmtree``).
+Output: ``<save-dir>/<run-id>/level-<dr-level>``, where ``run-id`` is ``--run-name``
+if given, else a timestamp (``20260915-134512``). An existing dataset is **never
+wiped or reused** — a colliding run id gets a numeric suffix instead, so every run
+starts a new directory (point ``--save-dir`` at another root to move it elsewhere).
 """
 
 from __future__ import annotations
@@ -329,9 +332,27 @@ def _load_policy_motion_config(policy_config: str) -> dict:
     }
 
 
+def _resolve_run_dir(save_dir: str, dr_level: int, run_name: str = "") -> str:
+    """Pick this run's dataset dir: ``<save-dir>/<run-id>/level-<dr-level>``.
+
+    The run id is ``run_name`` when given, else a timestamp. An existing dataset is
+    never reused (lerobot's ``create`` would refuse the existing root anyway) — a
+    colliding run id gets a ``-2``/``-3`` suffix, so old data is always left alone.
+    """
+    run_id = run_name or time.strftime("%Y%m%d-%H%M%S")
+    root = os.path.abspath(save_dir)
+    run_save_dir = f"{root}/{run_id}/level-{dr_level}"
+    suffix = 2
+    while os.path.exists(run_save_dir):
+        run_save_dir = f"{root}/{run_id}-{suffix}/level-{dr_level}"
+        suffix += 1
+    return run_save_dir
+
+
 def main(
     # dataset
-    save_dir: Annotated[str, typer.Option()] = "data/teleop_jaka_mf_zmq",
+    save_dir: Annotated[str, typer.Option()] = "data/teleop_jaka_mf",
+    run_name: Annotated[str, typer.Option(help="Leaf dir under --save-dir; default: timestamp")] = "",
     desc: Annotated[str, typer.Option()] = "close the trash can",
     num_episodes: Annotated[int, typer.Option()] = 100,
     frequency: Annotated[int, typer.Option()] = 30,
@@ -370,11 +391,7 @@ def main(
     # unconditionally and is only *consulted* when ``use_pico``.
     pico_toggle = MotionToggleTrigger(motion_client)
 
-    run_save_dir = f"{os.path.abspath(save_dir)}/level-{dr_level}"
-    import shutil
-
-    if os.path.exists(run_save_dir):
-        shutil.rmtree(run_save_dir)
+    run_save_dir = _resolve_run_dir(save_dir, dr_level, run_name)
 
     # The LeRobot dataset is created LAZILY on the first received camera frame, using that
     # frame's actual HWC shape as the declared `head_image_left` shape. The camera resolution
@@ -382,7 +399,8 @@ def main(
     # hard-coding it here would break every time the camera cfg changes.
     exporter = None
     head_shape: tuple[int, ...] | None = None
-    print(f"[record] Will create the dataset at {run_save_dir} on the first camera frame")
+    print(f"[record] New dataset will be created at {run_save_dir} on the first camera "
+          f"frame (--run-name picks the subdir; existing datasets are never touched)")
 
     state_root_calc = OpenHLMRootVel()   # 3 维 (roll,pitch,yaw_vel) — state 30 / action 也用这个
     action_root_calc = OpenHLMRootVel()  # 3 维; 绝对 yaw 不再单独存(可从原始 quat 恢复)

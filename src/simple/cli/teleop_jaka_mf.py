@@ -416,33 +416,35 @@ def main(
                 # (the buffer must run on this process's clock) while `smplx_off` is
                 # the publisher's raw XR-clock offset and can be huge. `ref_z` is the
                 # reference anchor height the policy is asked to hold.
-                if motion_buffer is not None:
-                    # Never let a *diagnostic* take down the control loop: every
-                    # optional field is None until the first reference frame arrives
-                    # (and some stay None with no publisher at all), so format them
-                    # through _fmt_opt and guard the whole block.
-                    try:
-                        rd = motion_buffer.diagnostics()
-                        md = agent.policy.state_processor.motion_data
-                        ref_z = ""
-                        if md is not None:
-                            try:
-                                anchor = (agent.policy.policy_config.get("motion", {}) or {}).get(
-                                    "anchor_body_name", "waist_yaw_Link")
-                                z = md.body_pos_w[0, :, BODY_NAMES.index(anchor)][:, 2]
-                                ref_z = (f"  ref_z={float(z.min()):.3f}..{float(z.max()):.3f}")
-                            except (ValueError, IndexError, TypeError):
-                                pass
-                        print(f"[ref] frames={rd['window_frames']}/{rd['buffered']} "
-                              f"clamped={rd['clamped']} "
-                              f"dt={_fmt_opt(rd['last_dt_ms'], 'ms')} "
-                              f"ts_off={_fmt_opt(rd['ts_offset_ms'], 'ms')} "
-                              f"smplx_off={_fmt_opt(rd['smplx_offset_ms'], 's', '.0f', 1e-3)} "
-                              f"regress={rd['ts_regressions']} "
-                              f"jump={_fmt_opt(rd['jump_recent_m'], 'm', '.2f')}{ref_z}",
-                              flush=True)
-                    except Exception as exc:  # noqa: BLE001
-                        print(f"[ref] diagnostics unavailable: {exc}", flush=True)
+                # if motion_buffer is not None:
+                #     # Never let a *diagnostic* take down the control loop: every
+                #     # optional field is None until the first reference frame arrives
+                #     # (and some stay None with no publisher at all), so format them
+                #     # through _fmt_opt and guard the whole block.
+                #     try:
+                #         rd = motion_buffer.diagnostics()
+                #         md = agent.policy.state_processor.motion_data
+                #         ref_z = ""
+                #         if md is not None:
+                #             try:
+                #                 anchor = (agent.policy.policy_config.get("motion", {}) or {}).get(
+                #                     "anchor_body_name", "waist_yaw_Link")
+                #                 z = md.body_pos_w[0, :, BODY_NAMES.index(anchor)][:, 2]
+                #                 ref_z = (f"  ref_z={float(z.min()):.3f}..{float(z.max()):.3f}")
+                #             except (ValueError, IndexError, TypeError):
+                #                 pass
+                #         print(f"[ref] frames={rd['window_frames']}/{rd['buffered']} "
+                #               f"clamped={rd['clamped']} "
+                #               f"dt={_fmt_opt(rd['last_dt_ms'], 'ms')} "
+                #               f"ts_off={_fmt_opt(rd['ts_offset_ms'], 'ms')} "
+                #               f"smplx_off={_fmt_opt(rd['smplx_offset_ms'], 's', '.0f', 1e-3)} "
+                #               f"regress={rd['ts_regressions']} "
+                #               f"jump={_fmt_opt(rd['jump_recent_m'], 'm', '.2f')} "
+                #               f"align={_fmt_opt(rd['align_yaw_deg'], 'deg')}"
+                #               f"{'' if rd['aligned'] else ' (identity)'}{ref_z}",
+                #               flush=True)
+                #     except Exception as exc:  # noqa: BLE001
+                #         print(f"[ref] diagnostics unavailable: {exc}", flush=True)
                 fps_t0, fps_n0 = now, sim_cnt
                 time_get = time_env = time_data = time_phys = time_sync = time_obj = 0.0
                 for _k in env_dbg:

@@ -133,6 +133,7 @@ python -m simple.cli.record_jaka_zmq \
   --frequency 30 \
   --policy-config data/jaka_mf/latest56k_pico_dr.yaml \
   --trigger pico      # 可省略:默认 both(pico A 键 + 键盘回车都行)
+  # --run-name exp01  # 可省略:默认用时间戳当这一层的目录名
 ```
 
 **数据来源（三路 ZMQ，全部 latest-only）**
@@ -170,9 +171,11 @@ python -m simple.cli.record_jaka_zmq \
 > ⚠️ 录制端是**跟随电平**的：若它启动时 pico 已经开始录制（电平已是 True），会**立即开始录**。
 > 想测「第 N 帧那个开启沿」，要么先起录制端再起 hub，要么把 `--record-start` 调大。
 > 另：`--trigger keyboard`（旧默认）**完全不看** pico 开关，会出现「teleop 重置了但录制端没反应」。
-输出在 `<save-dir>/level-<dr-level>/`（默认 `data/teleop_jaka_mf_zmq/level-0`）。
+输出在 `<save-dir>/<run-id>/level-<dr-level>/`，`run-id` = `--run-name`（未指定则用时间戳
+`20260915-134512`）。默认 `--save-dir` 时即 `data/teleop_jaka_mf_zmq/20260915-134512/level-0`。
 
-> ⚠️ `record_jaka_zmq` **启动时会清空** `<save-dir>/level-<dr-level>`（`shutil.rmtree`），先备份旧数据。
+> ✅ `record_jaka_zmq` **不会再删除已有数据**：每次运行都开一个新目录，`run-id` 撞名时自动加
+> `-2`/`-3` 后缀，旧的 `level-0` 原地保留。想换存储位置直接 `--save-dir <别的根目录>`。
 
 ## 4. 校验录制的 action（可选）
 
