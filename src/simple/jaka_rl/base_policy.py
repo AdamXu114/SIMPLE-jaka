@@ -155,7 +155,7 @@ class BasePolicy:
 
         Mirrors sim2real's ``Tracking`` subclass: applies ``motion_backend``,
         trims ``future_steps`` to ``max_future``, and fills ZMQ connect/hwm/
-        dt/tolerance when running the live ``zmq`` backend.
+        dt/tolerance when running a live ZMQ backend (``zmq`` / ``zmq_vla``).
         """
         from copy import deepcopy
 
@@ -175,7 +175,11 @@ class BasePolicy:
                     "Trimmed motion.future_steps with max_future=%d from %s to %s",
                     max_future, original, trimmed,
                 )
-        if mb == "zmq":
+        # ``zmq_vla`` 同样是"实时 ZMQ 流",这几项必须一并注入:否则它会退到
+        # state_processor 里硬编码的默认值(端口 28701 / dt 0.02 / tol 0.04),
+        # 于是 teleop 配置里的端口被静默忽略,且 rl_rate ≠ 50 时
+        # dt_s ≠ 1/rl_rate —— 播放点追不上数据到达,参考被拉伸且缓冲无限膨胀。
+        if mb in ("zmq", "zmq_vla"):
             motion_cfg["motion_zmq_connect"] = self.args.motion_zmq_connect
             motion_cfg["motion_zmq_hwm"] = self.args.motion_zmq_hwm
             motion_cfg["motion_dt_s"] = 1.0 / float(self.args.rl_rate)
@@ -490,7 +494,7 @@ class BasePolicyArgs:
     inference_backend: Literal["onnx-gpu", "onnx-cpu", "tensorrt"] = "onnx-cpu"
     controller: Literal["keyboard", "joystick", "pico"] = "keyboard"
     pico_zmq_connect: str = "tcp://127.0.0.1:5592"
-    motion_backend: Literal["npz", "zmq", "raw_npz"] | None = None
+    motion_backend: Literal["npz", "zmq", "zmq_vla", "raw_npz"] | None = None
     max_future: int | None = None
     motion_zmq_connect: str = "tcp://127.0.0.1:28701"
     motion_zmq_hwm: int = 1
