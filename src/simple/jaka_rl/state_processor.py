@@ -16,7 +16,7 @@ import numpy as np
 from typing import Any, Dict, Optional
 
 from simple.jaka_rl.motion import MotionData
-from simple.jaka_rl.motion_buffer import RealtimeMotionBuffer
+from simple.jaka_rl.motion_buffer import RealtimeMotionBuffer, RealtimeMotionBufferVla
 from simple.jaka_rl.npz_motion import NpzMotionDataset
 
 
@@ -65,7 +65,7 @@ class StateProcessor:
         self.motion_body_names: list[str] = []
         self.motion_future_steps = np.array([0], dtype=int)
         self.motion_dataset = None
-        self.motion_buffer: RealtimeMotionBuffer | None = None
+        self.motion_buffer: RealtimeMotionBuffer | RealtimeMotionBufferVla | None = None
         self.motion_t = np.array([0], dtype=int)
         self.motion_ids = np.array([0], dtype=int)
         self.motion_length = 0
@@ -116,6 +116,32 @@ class StateProcessor:
             # same as the hub publishes) when the live buffer has no data — so
             # `[`-align + `]`-track stands on the real motion even without a hub.
             self._init_zmq_npz_replay()
+        elif motion_backend == "zmq_vla":
+            # VLA 部署: openpi-eval 客户端 30Hz 二进制流 → RealtimeMotionBufferVla
+            # (双协议入口 + frame_index 去重 + 重锚定 + 数据驱动播放时钟;
+            #  无 npz replay 回退 — 空流时参考为默认 FK 站姿)
+            self.motion_buffer = RealtimeMotionBufferVla(
+                joint_names=self.joint_names,
+                body_names=self._body_names or [],
+                future_steps=self.motion_future_steps,
+                mj_model=self._mj_model,
+                mj_data=self._mj_data,
+                default_qpos=self._default_qpos,
+                motion_zmq_connect=self.motion_config.get(
+                    "motion_zmq_connect", "tcp://127.0.0.1:28701"
+                ),
+                motion_zmq_hwm=int(self.motion_config.get("motion_zmq_hwm", 1)),
+                dt_s=float(self.motion_config.get("motion_dt_s", 0.02)),
+                tolerance_s=float(self.motion_config.get("motion_tolerance_s", 0.04)),
+                nominal_frame_s=float(
+                    self.motion_config.get("motion_nominal_frame_s", 1.0 / 30.0)
+                ),
+                gap_threshold_s=float(
+                    self.motion_config.get("motion_gap_threshold_s", 0.05)
+                ),
+            )
+            self.motion_joint_names = list(self.motion_buffer.joint_names)
+            self.motion_body_names = list(self.motion_buffer.body_names)
         else:
             raise ValueError(f"Unsupported motion_backend: {motion_backend}")
 
@@ -249,7 +275,7 @@ class StateProcessor:
             self.motion_data = self.npz_dataset.get_slice(
                 self.motion_ids, self.motion_t, self.motion_future_steps
             )
-        elif self.motion_backend == "zmq":
+        elif self.motion_backend in ("zmq", "zmq_vla"):
             if self._using_zmq_replay():
                 self.motion_data = self._npz_replay_slice()
             else:
