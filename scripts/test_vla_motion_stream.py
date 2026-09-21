@@ -764,7 +764,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--drop-every", type=int, default=0,
                    help="每 N 条消息丢 1 条(模拟丢帧,0=不丢)")
     g.add_argument("--loop", action="store_true", help="数据放完后从头循环回放")
-    g.add_argument("--hold-s", type=float, default=3.0,
+    g.add_argument("--hold-s", type=float, default=0.0,
                    help="数据放完后原地保持末帧的秒数(让尾巴播完、进入稳态)")
     g.add_argument("--final-stall-s", type=float, default=0.0,
                    help="最后彻底停发这么多秒(模拟 VLA 服务挂掉)")
