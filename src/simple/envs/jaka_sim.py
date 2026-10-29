@@ -62,14 +62,18 @@ class JakaSimEnv(BaseDualSim):
         qpos = np.asarray(
             list(self.mujoco.get_robot_qpos().values()), dtype=np.float32
         )
-        qvel = np.asarray(
-            list(self.task.robot.get_robot_qvel().values()), dtype=np.float32
-        ) if hasattr(self.task.robot, "get_robot_qvel") else np.zeros_like(qpos)
 
-        obs = {
-            "joint_qpos": qpos,
-            "joint_qvel": qvel,
-        }
+        obs = {"joint_qpos": qpos}
+        # obs_visual=False shrinks observation_space to joint_qpos only (see
+        # BaseDualSim); returning qvel as well would trip gym's reset checker.
+        if self.obs_visual:
+            obs["joint_qvel"] = (
+                np.asarray(
+                    list(self.task.robot.get_robot_qvel().values()), dtype=np.float32
+                )
+                if hasattr(self.task.robot, "get_robot_qvel")
+                else np.zeros_like(qpos)
+            )
         return obs
 
     # ------------------------------------------------------------------

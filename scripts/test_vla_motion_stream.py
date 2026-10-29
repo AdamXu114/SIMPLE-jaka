@@ -68,7 +68,10 @@ anchor(``waist_yaw_Link``)世界位姿的来源见 ``--anchor-source``:
 
 终端 B —— 接收端(``motion_backend`` 已设为 ``zmq_vla``)::
 
-    python -m simple.cli.teleop_jaka_mf simple/JakaTabletopPickTeleop-v0 --headless
+    python -m simple.cli.teleop_jaka_mf simple/JakaWholebodySim-v0 --headless
+
+``JakaWholebodySim-v0`` 是**只有地面**的空场景(robot + 地面块,没有桌子/物体),
+正好排除场景干扰,只观察参考流下发。
 
 ⚠️ **先后顺序很重要**:PUB 不缓存 —— 订阅者没连上之前发的消息直接丢弃。而 teleop 启动
 到进入控制循环要约 15s,一段 5s 的数据在它连上之前就发完了。所以:
@@ -145,7 +148,7 @@ assert np.array_equal(
 ), "关节序置换不可逆"
 
 # 默认数据集:47 集真录 teleop 数据(3.4~18.7s),VLA 训练用的就是它
-DEFAULT_SESSION = "data/simple/JakaTabletopPickTeleop-v0/level-0"
+DEFAULT_SESSION = "data/teleop_jaka_mf_real/20261015-135528"
 
 # ---------------------------------------------------------------------------
 # 协议 v1 打包 —— 与 openpi-eval ``sonic_g1_env.pack_pose_message`` 逐字节等价
@@ -727,8 +730,8 @@ def print_teleop_hint() -> None:
         "\n[recv] 接收端(另开终端):\n"
         "       1) 把 data/jaka_mf/teleop_jaka_mf.yaml 的 motion_backend 改成 zmq_vla\n"
         "          (motion_zmq_connect 应保持 tcp://127.0.0.1:28701)\n"
-        "       2) python -m simple.cli.teleop_jaka_mf simple/JakaTabletopPickTeleop-v0 "
-        "--no-headless\n"
+        "       2) python -m simple.cli.teleop_jaka_mf simple/JakaWholebodySim-v0 "
+        "--no-headless   # 只有地面,没有桌子/物体\n"
     )
 
 

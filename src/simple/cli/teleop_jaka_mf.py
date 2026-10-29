@@ -361,7 +361,8 @@ def main(
             time_phys += _ms.dbg_ms_physics
             time_sync += _ms.dbg_ms_sync
             time_obj += _ms.dbg_ms_obj
-            for _k, _v in jaka_env.dbg_ms.items():
+            # JakaSimEnv (e.g. JakaWholebodySim-v0) doesn't record per-stage dbg_ms.
+            for _k, _v in getattr(jaka_env, "dbg_ms", {}).items():
                 if _k in env_dbg:
                     env_dbg[_k] += _v
 

@@ -341,6 +341,10 @@ class ZMQSimBridge:
         if not self.has_received_command:
             return
 
+        # [锁颈] 固定颈部关节目标为默认关节角(0.0)，头部不再随策略转动；注释掉下面两行即可恢复
+        for _n in ("Neck_yaw_joint", "Neck_pitch_joint"):
+            self.cmd_q[self.joint_names.index(_n)] = self._default_joint_pos.get(_n, 0.0)
+
         for i in range(self.num_joints):
             tau = (
                 self.cmd_tau[i]

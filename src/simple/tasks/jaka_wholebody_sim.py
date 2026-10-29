@@ -47,6 +47,7 @@ class JakaWholebodySim(Task):
         "physics_dt": 0.002,
         "render_hz": 30,
         "version": 1.0,
+        "need_gravity": True,
         "max_episode_steps": 10000,
     }
 
@@ -150,8 +151,10 @@ class JakaWholebodySim(Task):
         self._layout = Layout()
         self._layout.add_robot(self.robot)
 
-        # Provide a minimal scene with a ground-level table
-        # (required by MuJoCo simulator for ground-plane placement)
+        # ``Layout.scene.table`` is still required: the simulator reads it when
+        # laying out the ground plane. It is deliberately NOT added as a
+        # primitive actor, so no visible table/slab appears in the scene — the
+        # robot stands directly on the ground plane.
         ground_table = Box(
             size=[2.0, 2.0, 0.05],
             position=[0.0, 0.0, -0.025],
@@ -160,7 +163,6 @@ class JakaWholebodySim(Task):
         scene = TabletopScene()
         scene.table = ground_table
         self._layout.scene = scene
-        self._layout.add_primitive("table", ground_table)
 
     # ------------------------------------------------------------------
     # Task logic (no-op for raw simulation)
