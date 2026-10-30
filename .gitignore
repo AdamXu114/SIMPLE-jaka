@@ -51,6 +51,8 @@ Thumbs.db
 data/*
 !data/README.md
 !data/_download.py
+!data/jaka_mf/
+!data/jaka_mf/**
 !.env.sample
 
 # Sphinx build artifacts

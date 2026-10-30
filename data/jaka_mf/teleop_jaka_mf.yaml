@@ -1,0 +1,71 @@
+# simple.cli.teleop_jaka_mf 运行配置 —— 日常调参改这里,不要往 CLI 加参数。
+#
+# CLI 只保留「每次运行会变」的少量开关(--target / --controller / --headless /
+# --debug-log),其余全部收在本文件。缺省值在 teleop_jaka_mf._DEFAULTS 里,
+# 本文件只覆盖需要改的键(缺失的键自动用代码缺省)。
+
+# ---------------------------------------------------------------------------
+# 策略
+# ---------------------------------------------------------------------------
+policy_config: data/jaka_mf/latest56k_pico_dr.yaml
+policy_model: ""              # 空 = 用 policy_config 同名的 .onnx
+inference_backend: onnx-cpu   # onnx-cpu | onnx-gpu | tensorrt
+
+# 参考运动来源:
+#   zmq     = 订阅 pico hub 的 :28701 实时流(遥操作,JSON 协议)
+#   zmq_vla = openpi-eval 的 30Hz 二进制 VLA 流 → RealtimeMotionBufferVla
+#             (部署用;本机没有 VLA 服务器时用
+#              scripts/test_vla_motion_stream.py 仿真下发)
+#   raw_npz = 离线 npz
+motion_backend: zmq_vla
+motion_diagnostics: true
+motion_zmq_connect: tcp://127.0.0.1:28701
+pico_zmq_connect: tcp://127.0.0.1:5592   # pico 手柄按钮(A=init/B=zero/A+B=policy)
+
+# ---------------------------------------------------------------------------
+# 仿真 / 控制循环
+# ---------------------------------------------------------------------------
+sim_mode: mujoco
+rl_rate: 50            # 控制频率(Hz);物理子步 = 1/(sim_dt*rl_rate)
+render_hz: 50
+dr_level: 0            # 场景 domain randomization 等级
+max_episode_steps: 30000
+success_criteria: 5
+# MF 遥操作只从 mjData 读状态、不用 gym 的图像 obs;false 可省掉 _get_obs 里
+# ~7 ms/步的 _render_frame,正是它能跑到 50 Hz 的关键。
+obs_visual: false
+# MuJoCo 窗口刷新节流(0 = 每步同步)。物理/控制循环仍按 rl_rate 跑,
+# 只降窗口同步频率 —— 开窗渲染很贵(~20 ms/步),不节流会拖垮循环。
+viewer_hz: 0
+# 窗口视角:留空(默认)= 原来的第三人称,跟踪 base_link。
+# 可选:填模型里的相机名切成第一人称,如 "head_stereo_left"(机器人头部,也是
+# 录制的头相机视角)。
+# 因为 env.reset() 会重建模型 + 重开窗口,该设置会在每次重开后重新应用,
+# 所以 reset 之后视角不会跳回默认。
+viewer_camera: ""
+
+# ---------------------------------------------------------------------------
+# 初始姿态
+# ---------------------------------------------------------------------------
+# 初始站立高度(米,base 的 z)。场景 spawn 在 ~0.793,但 policy 的平衡点在
+# ~0.596,直接用平衡高度起步,否则开局会下坠约 19.7 cm 才站稳。
+# 注意 DEFAULT_QPOS 自带的 0.65 也偏高(实测仍会掉 ~5.4 cm)。
+init_base_z: 0.596
+# 弹力带(虚拟吊带):暂时禁用,用来验证 policy 能否自主站立。
+# 恢复 = 改成 true(代码里原始的 `if enable_elastic_band: agent._enable_band()`
+# 保留在注释中)。注意首次进入 policy 时它是被 env.reset() 重新置 True 的,
+# 代码会显式按本键设 enable。
+enable_elastic_band: false
+
+# ---------------------------------------------------------------------------
+# 独立录制进程(simple.cli.record_jaka_zmq)的发布源
+# state 每个控制拍发一次(rl_rate=50 Hz),相机按 camera_hz 节流(OpenHLM 的
+# 50 Hz state / 30 Hz image 划分)。camera_hz: 0 = 不节流。
+# ---------------------------------------------------------------------------
+state_zmq_bind: tcp://*:28711
+camera_zmq_bind: tcp://*:28712
+camera_name: head_stereo_left
+camera_hz: 30
+# 录制结束标志 = 运动流里的 toggle_data_collection(pico A 键)由高变低。
+# 收到该下降沿时重置环境,让下一回合从干净且重新随机的场景开始。
+reset_on_record_end: true
