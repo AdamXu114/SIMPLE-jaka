@@ -1,0 +1,80 @@
+robot_cfg:
+    kinematics:
+        use_usd_kinematics: false
+        urdf_path: khan.urdf
+        external_robot_configs_path: robots/jaka/curobo
+        external_asset_path: robots/jaka
+        asset_root_path: null
+        isaac_usd_path: null
+        usd_robot_root: null
+        usd_path: null
+        base_link: "base_link"
+        ee_link: "Right_wrist_yaw__Link"
+
+        link_names:
+            - waist_yaw_Link
+            - Right_wrist_yaw__Link
+            - Left_wrist_yaw_Link
+
+        collision_link_names: []
+        collision_spheres: null
+        collision_sphere_buffer: 0.005
+        extra_collision_spheres: {}
+        self_collision_ignore: {}
+        self_collision_buffer: {}
+
+        use_global_cumul: True
+        mesh_link_names: null
+
+        cspace:
+            joint_names:
+                - Left_hip_pitch_joint
+                - Left_hip_roll_joint
+                - Left_hip_yaw_joint
+                - Left_knee_joint
+                - Left_ankle_pitch_joint
+                - Left_ankle_roll_joint
+                - Right_hip_pitch_joint
+                - Right_hip_roll_joint
+                - Right_hip_yaw_joint
+                - Right_knee_joint
+                - Right_ankle_pitch_joint
+                - Right_ankle_roll_joint
+                - waist_yaw_joint
+                - Left_shoulder_pitch_joint
+                - Left_shoulder_roll_joint
+                - Left_shoulder_yaw_joint
+                - Left_elbow_joint
+                - Left_wrist_roll_joint
+                - Left_wrist_yaw_joint
+                - Right_shoulder_pitch_joint
+                - Right_shoulder_roll_joint
+                - Right_shoulder_yaw_joint
+                - Right_elbow_joint
+                - Right_wrist_roll_joint
+                - Right_wrist_yaw_joint
+                - Neck_yaw_joint
+                - Neck_pitch_joint
+            retract_config:
+                [0,0,0,0,0,0,
+                 0,0,0,0,0,0,
+                 0,
+                 0,0,0,0,0,0,
+                 0,0,0,0,0,0,
+                 0,0]
+            null_space_weight:
+                [1,1,1,1,1,1,
+                 1,1,1,1,1,1,
+                 1,
+                 1,1,1,1,1,1,
+                 1,1,1,1,1,1,
+                 1,1]
+            cspace_distance_weight:
+                [1,1,1,1,1,1,
+                 1,1,1,1,1,1,
+                 1,
+                 1,1,1,1,1,1,
+                 1,1,1,1,1,1,
+                 1,1]
+            max_jerk: 500.0
+            max_acceleration: 10.0

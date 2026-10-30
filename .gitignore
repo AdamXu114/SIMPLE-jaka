@@ -53,6 +53,10 @@ data/*
 !data/_download.py
 !data/jaka_mf/
 !data/jaka_mf/**
+!data/robots/
+data/robots/*
+!data/robots/jaka/
+!data/robots/jaka/**
 !.env.sample
 
 # Sphinx build artifacts
